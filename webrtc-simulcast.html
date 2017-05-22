@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WebRTC Simulcast Test</title>
+    <style>
+  video {
+    border:5px solid black;
+  }
+  button {
+    font: 18px sans-serif;
+    padding: 8px;
+  }
+    </style>
+</head>
+<body>
+<!--<div>
+<button> Codec</button>
+</div>-->
+<div style="position:relative">
+    <video id="localVideo" autoplay></video>
+    <span type="text" style="display:inline-block;position:absolute;color:yellow;top:5px;left:5px;">Sent Video Stream</span>
+    <span type="text" id="localVideoResolution" style="display:inline-block;position:absolute;color:yellow;top:25px;left:5px;"></span>
+    <span type="text" id="localVideoFrameRate" style="display:inline-block;position:absolute;color:yellow;top:45px;left:5px;"></span>
+    <span type="text" id="localVideoBitRate"    style="display:inline-block;position:absolute;color:yellow;top:65px;left:5px;"></span>
+</div>
+<!-- These video tags and canvases should match the stream labels returned by PC_SERVER_REMOTE_OFFER. The canvases are there for video detection. -->
+<div style="position:relative">
+    <video id="remoteVideo1" autoplay></video>
+    <span type="text" style="display:inline-block;position:absolute;color:red;top:5px;left:5px;">Received Video Stream 1</span>
+    <span type="text" id="remoteVideo1Resolution" style="display:inline-block;position:absolute;color:red;top:25px;left:5px;"></span>
+    <span type="text" id="remoteVideo1FrameRate" style="display:inline-block;position:absolute;color:red;top:45px;left:5px;"></span>
+    <span type="text" id="remoteVideo1BitRate" style="display:inline-block;position:absolute;color:red;top:65px;left:5px;"></span>
+</div>
+<div style="position:relative">
+    <video id="remoteVideo2" autoplay></video>
+    <span type="text" style="display:inline-block;position:absolute;color:red;top:5px;left:5px;">Received Video Stream 2</span>
+    <span type="text" id="remoteVideo2Resolution" style="display:inline-block;position:absolute;color:red;top:25px;left:5px;"></span>
+    <span type="text" id="remoteVideo2FrameRate" style="display:inline-block;position:absolute;color:red;top:45px;left:5px;"></span>
+    <span type="text" id="remoteVideo2BitRate" style="display:inline-block;position:absolute;color:red;top:65px;left:5px;"></span>
+</div>
+<div style="position:relative">
+    <video id="remoteVideo3" autoplay></video>
+    <span type="text" style="display:inline-block;position:absolute;color:red;top:5px;left:5px;">Received Video Stream 3</span>
+    <span type="text" id="remoteVideo3Resolution" style="display:inline-block;position:absolute;color:red;top:25px;left:5px;"></span>
+    <span type="text" id="remoteVideo3FrameRate" style="display:inline-block;position:absolute;color:red;top:45px;left:5px;"></span>
+    <span type="text" id="remoteVideo3BitRate" style="display:inline-block;position:absolute;color:red;top:65px;left:5px;"></span>
+</div>
+<canvas id="remoteVideo1-canvas" autoplay style="display:none"></canvas>
+<canvas id="remoteVideo2-canvas" autoplay style="display:none"></canvas>
+<canvas id="remoteVideo3-canvas" autoplay style="display:none"></canvas>
+
+<script type="text/javascript" src="adapter.js"></script>
+<script type="text/javascript" src="webrtc_test_utilities.js"></script>
+<script type="text/javascript">
+
+    var pcClient, pcServer;
+    var localStream;
+    var remoteVideoUrls = [ ];
+    var serverAnswer;
+
+    // When all required video tags are playing video, succeed the test.
+    setAllEventsOccuredHandler(function() {
+            returnToTest('OK');
+        });
+
+    // Checks that we can get a simulcast stream call up on VGA.
+    function testVgaReturnsTwoSimulcastStreams() {
+        initialize();
+        openCamera(1280, 720);
+
+        // For VGA we should get a QVGA and VGA stream. The video tags are named after
+        // the stream IDs which are defined in PC_SERVER_REMOTE_OFFER.
+        waitForVideo('remoteVideo1');
+        waitForVideo('remoteVideo2');
+    }
+
+    // Template for the local offer, representing a single input stream backing
+    // 3 different SSRCs, all in one SIM ssrc-group.
+    function makeClientOffer() {
+        var lines = [
+            'v=0',
+            'o=- 0 3 IN IP4 127.0.0.1',
+            's=-',
+            't=0 0',
+            'm=video 1 RTP/SAVPF 100',
+            'b=AS:4096',
+            'a=rtcp:1 IN IP4 0.0.0.0',
+            'a=ice-ufrag:6HHHdzzeIhkE0CKj',
+            'a=ice-pwd:XYDGVpfvklQIEnZ6YnyLsAew',
+            'a=sendonly',
+            'a=mid:video',
+            'a=crypto:1 AES_CM_128_HMAC_SHA1_80 ' +
+            'inline:Rlz8z1nMtwq9VF7j06kTc7uyio1iYuEdeZ7z1P9E',
+            'a=rtpmap:100 VP8/90000',
+            'a=fmtp:100 x-google-start-bitrate=100000',
+            'a=fmtp:100 x-google-min-bitrate=80000',
+            'a=x-google-flag:conference'
+            ];
+
+        if (localStream) {
+            var videoTracks = localStream.getVideoTracks();
+            if (videoTracks.length > 0) {
+                trace('Using Video device: ' + videoTracks[0].id);
+            } else {
+                trace('WARNING: No video device!');
+                return lines.join('\n');
+            }
+
+            lines = lines.concat( [
+                                     'a=ssrc-group:SIM 1 2 3',
+                                     'a=ssrc:1 cname:localVideo',
+                                     'a=ssrc:1 msid:' + localStream.id + ' ' + videoTracks[0].id,
+                                     'a=ssrc:2 cname:localVideo',
+                                     'a=ssrc:2 msid:' + localStream.id + ' ' + videoTracks[0].id,
+                                     'a=ssrc:3 cname:localVideo',
+                                     'a=ssrc:3 msid:' + localStream.id + ' ' + videoTracks[0].id
+                                     ]);
+        }
+        lines.push('');
+
+        return new RTCSessionDescription( {
+               'type': 'offer',
+               'sdp': lines.join('\n')
+        });
+    }
+
+    // Remote perspective on that offer, representing each SSRC as a distinct
+    // (non-synchronized) output video stream.
+    var PC_SERVER_REMOTE_OFFER = [
+        'v=0',
+        'o=- 0 3 IN IP4 127.0.0.1',
+        's=-',
+        't=0 0',
+        'm=video 1 RTP/SAVPF 100',
+        'b=AS:4096',
+        'a=sendonly',
+        'a=mid:video',
+        'a=rtcp:1 IN IP4 0.0.0.0',
+        'a=ice-ufrag:6HHHdzzeIhkE0CKj',
+        'a=ice-pwd:XYDGVpfvklQIEnZ6YnyLsAew',
+        'a=crypto:1 AES_CM_128_HMAC_SHA1_80 ' +
+        'inline:Rlz8z1nMtwq9VF7j06kTc7uyio1iYuEdeZ7z1P9E',
+        'a=rtpmap:100 VP8/90000',
+        'a=x-google-flag:conference',
+        'a=fmtp:100 x-google-start-bitrate=100000',
+        'a=fmtp:100 x-google-min-bitrate=80000',
+        'a=ssrc:1 cname:remoteVideo1',
+        'a=ssrc:1 msid:remoteVideo1 remoteVideo1v0',
+        'a=ssrc:2 cname:remoteVideo2',
+        'a=ssrc:2 msid:remoteVideo2 remoteVideo2v0',
+        'a=ssrc:3 cname:remoteVideo3',
+        'a=ssrc:3 msid:remoteVideo3 remoteVideo3v0',
+        ''
+        ].join('\n');
+
+    function trace(text) {
+        // This function is used for logging.
+        if (text[text.length - 1] == '\n') {
+            text = text.substring(0, text.length - 1);
+        }
+        console.log((performance.now() / 1000).toFixed(3) + ': ' + text);
+    }
+
+    function initialize() {
+        trace('Setting up for a new call.');
+        var configs = { iceServers: [ ], rtcpMuxPolicy: 'negotiate' };
+        var constraints = { 'mandatory': { 'DtlsSrtpKeyAgreement': false } };
+
+        pcClient = new RTCPeerConnection(configs, constraints);
+        trace('Created local peer connection object pcClient');
+        pcClient.onicecandidate = onClientIceCandidate;
+
+        pcServer = new RTCPeerConnection(configs, constraints);
+        trace('Created remote peer connection object pcServer');
+        pcServer.onicecandidate = onServerIceCandidate;
+        pcServer.onaddstream = onServerGotStream;
+
+        var pcClientInitialOffer = makeClientOffer();
+        trace('Setting initial local Offer to:\n' + pcClientInitialOffer);
+        pcClient.setLocalDescription(pcClientInitialOffer,
+                                     setServerRemoteDescription, setServerRemoteDescription);
+    }
+
+    function gotStream(stream) {
+        trace('Received local stream');
+        localVideo.src = URL.createObjectURL(stream);
+        localStream = stream;
+        pcClient.addStream(localStream);
+        renegotiateClient();
+    }
+
+    function didntGetStream(err) {
+        returnToTest('Unexpectedly failed to acquire user media: ' + err);
+    }
+
+    function openCamera(width, height) {
+        if (localStream) {
+            pcClient.removeStream(localStream);
+            localStream.getVideoTracks()[0].stop();
+            localStream = null;
+        }
+
+        if (navigator.webkitGetUserMedia) {
+            navigator.webkitGetUserMedia( {
+                audio: false,
+                video: { 'mandatory': { 'minWidth': width, 'maxWidth': width,
+                        'minHeight': height, 'maxHeight': height } }
+            }, gotStream, didntGetStream);
+        } else if (navigator.mozGetUserMedia) {
+            navigator.mozGetUserMedia( {
+                audio: false,
+                video: { 'mandatory': { 'minWidth': width, 'maxWidth': width,
+                        'minHeight': height, 'maxHeight': height } }
+            }, gotStream, didntGetStream);
+
+        }
+    }
+
+    function renegotiateClient() {
+        pcClient.setLocalDescription(makeClientOffer(), function() {
+                pcClient.setRemoteDescription(serverAnswer);
+            }, function() {});
+    }
+
+    function setServerRemoteDescription() {
+        trace('Setting remote Offer to:\n' + PC_SERVER_REMOTE_OFFER);
+        pcServer.setRemoteDescription(new RTCSessionDescription( {
+            'type': 'offer',
+            'sdp': PC_SERVER_REMOTE_OFFER
+        }), afterSetServerRemoteDescription,afterSetServerRemoteDescription);
+    }
+
+    function afterSetServerRemoteDescription() {
+        pcServer.createAnswer(onServerAnswer, function(error) {});
+    }
+
+    function onServerAnswer(desc) {
+        desc.sdp += 'a=x-google-flag:conference\n';
+        serverAnswer = desc;
+        trace('Setting both Answers to:\n' + desc.sdp);
+        pcServer.setLocalDescription(desc);
+        pcClient.setRemoteDescription(desc);
+    }
+
+    function onServerGotStream(e) {
+        trace('Received remote stream: ' + e.stream.id +
+              '; looking up corresponding video tag.');
+
+        var remoteVideo = $(e.stream.id);
+        if (!remoteVideo) {
+            // All streams we receive must have a corresponding video tag defined in the
+            // html, otherwise we can't detect video in it.
+            throw 'Received video with unexpected id ' + e.stream.id;
+        }
+        remoteVideo.src = URL.createObjectURL(e.stream);
+    }
+
+    function onClientIceCandidate(event) {
+        if (event.candidate) {
+            pcServer.addIceCandidate(event.candidate);
+            trace('Local ICE candidate:\n' + event.candidate.candidate);
+        }
+    }
+
+    function onServerIceCandidate(event) {
+        if (event.candidate) {
+            pcClient.addIceCandidate(event.candidate);
+            trace('Remote ICE candidate:\n' + event.candidate.candidate);
+        }
+    }
+
+    function returnToTest(message) {
+        if (!window.domAutomationController) throw 'Expected to run in an automated context.';
+        window.domAutomationController.send(message);
+    }
+
+    $ = function(id) {
+        return document.getElementById(id);
+    };
+
+    testVgaReturnsTwoSimulcastStreams();
+
+
+
+    /*StreamStatistics ================================================Start*/
+    function MyRTCStreamStatistics() {
+        var self = this;
+
+        self.lastPackets = 0;
+        self.lastLost = 0;
+        self.lastBytes = 0;
+        self.lastTimestamp = null;
+        self.pctLost = [ ];
+        self.info = { };
+    }
+
+    MyRTCStreamStatistics.prototype.getStats = function() {
+        var self = this;
+        return self.info;
+    };
+
+    MyRTCStreamStatistics.prototype.updateBWEStats = function(result) {
+        var self = this;
+        self.info['configuredBitrate'] = (result.stat('googTargetEncBitrate') / 1000).toFixed(1) + 'kbps';
+    };
+
+    MyRTCStreamStatistics.prototype.updatePacketLossStats = function(currentTotal, currentLost) {
+        var self = this;
+        var lostNow = currentLost - self.lastLost;
+        var packetsNow = currentTotal - self.lastPackets;
+        self.pctLost.push((lostNow * 100) / packetsNow);
+        if (self.pctLost.length > 24) self.pctLost.splice(0, 1);
+        var pctAverage = self.pctLost.reduce(function(a, b) { return a + b; }, 0);
+        if (self.pctLost.length == 0) {
+            self.info['percentageLost'] = '0%';
+        } else {
+            self.info['percentageLost'] = (pctAverage / self.pctLost.length).toFixed(1) + '%';
+        }
+    };
+
+    MyRTCStreamStatistics.prototype.updateRxStats = function(result) {
+        var self = this;
+
+        if (!result) {
+            return;
+        }
+
+        if (result.stat != undefined) {
+            self.info['packetsReceived'] = result.stat('packetsReceived');
+            self.info['packetsLost'] = result.stat('packetsLost');
+            self.info['percentageLost'] = 0;
+            self.info['bitrate'] = "unavailable";
+
+            if (self.lastTimestamp > 0) {
+                self.updatePacketLossStats(self.info['packetsReceived'], self.info['packetsLost']);
+                var kbps = Math.round((result.stat('bytesReceived') - self.lastBytes) * 8 / (result.timestamp - self.lastTimestamp));
+                self.info['bitrate'] = kbps + 'kbps';
+            }
+
+            if (result.stat('googFrameHeightReceived')) self.info['resolution'] = result.stat('googFrameWidthReceived') + 'x' + result.stat('googFrameHeightReceived');
+
+            if (result.stat('googFrameRateReceived')) self.info['framerate'] = result.stat('googFrameRateReceived');
+
+            if (result.stat('googDecodeMs')) self.info['decodeDelay'] = result.stat('googDecodeMs') + 'ms';
+
+            self.lastTimestamp = result.timestamp;
+            self.lastBytes = result.stat('bytesReceived');
+            self.lastPackets = self.info['packetsReceived'];
+            self.lastLost = self.info['packetsLost'];
+
+        } else {
+
+            self.info['packetsReceived'] = result.packetsReceived;
+            self.info['packetsLost'] = result.packetsLost;
+            self.info['percentageLost'] = 0;
+            self.info['bitrate'] = "unavailable";
+
+            if (self.lastTimestamp > 0) {
+                self.updatePacketLossStats(self.info['packetsReceived'], self.info['packetsLost']);
+                var kbps = Math.round((result.bytesReceived - self.lastBytes) * 8 / (result.timestamp - self.lastTimestamp));
+                self.info['bitrate'] = kbps + 'kbps';
+            }
+
+            self.lastTimestamp = result.timestamp;
+            self.lastBytes = result.bytesReceived;
+            self.lastPackets = self.info['packetsReceived'];
+            self.lastLost = self.info['packetsLost'];
+
+        }
+
+    };
+
+    MyRTCStreamStatistics.prototype.updateTxStats = function(result) {
+        var self = this;
+
+        if (!result) {
+            return;
+        }
+
+        if (result.stat != undefined) {
+            self.info['packetsSent'] = result.stat('packetsSent');
+            self.info['packetsLost'] = result.stat('packetsLost');
+            self.info['percentageLost'] = 0;
+            self.info['bitrate'] = "unavailable";
+
+            if (self.lastTimestamp > 0) {
+                self.updatePacketLossStats(self.info['packetsSent'], self.info['packetsLost']);
+                var kbps = Math.round((result.stat('bytesSent') - self.lastBytes) * 8 / (result.timestamp - self.lastTimestamp));
+                self.info['bitrate'] = kbps + 'kbps';
+            }
+
+            if (result.stat('googFrameHeightSent')) self.info['resolution'] = result.stat('googFrameWidthSent') + 'x' + result.stat('googFrameHeightSent');
+
+            if (result.stat('googFrameRateSent')) self.info['framerate'] = result.stat('googFrameRateSent');
+
+            self.lastTimestamp = result.timestamp;
+            self.lastBytes = result.stat('bytesSent');
+            self.lastPackets = self.info['packetsSent'];
+            self.lastLost = self.info['packetsLost'];
+        } else {
+            self.info['packetsSent'] = result.packetsReceived;
+            self.info['packetsLost'] = result.packetsLost;
+            self.info['percentageLost'] = 0;
+            self.info['bitrate'] = "unavailable";
+
+            if (self.lastTimestamp > 0) {
+                self.updatePacketLossStats(self.info['packetsSent'], self.info['packetsLost']);
+                var kbps = Math.round((result.bytesReceived - self.lastBytes) * 8 / (result.timestamp - self.lastTimestamp));
+                self.info['bitrate'] = kbps + 'kbps';
+            }
+
+            self.lastTimestamp = result.timestamp;
+            self.lastBytes = result.bytesReceived;
+            self.lastPackets = self.info['packetsSent'];
+            self.lastLost = self.info['packetsLost'];
+
+        }
+    };
+
+    function MyRTCStatistics() {
+        var self = this;
+
+        self.audio_out = new MyRTCStreamStatistics();
+        self.audio_in = new MyRTCStreamStatistics();
+        self.video_out = new MyRTCStreamStatistics();
+        self.video1_in = new MyRTCStreamStatistics();
+        self.video2_in = new MyRTCStreamStatistics();
+        self.video3_in = new MyRTCStreamStatistics();
+    }
+
+    MyRTCStatistics.prototype.updateStats = function(results) {
+        var self = this;
+
+        if (results.length != undefined) {
+            for (var i = 0; i < results.length; ++i) {
+                if (self.statIsOfType(results[i], 'audio', 'send')) self.audio_out.updateTxStats(results[i]);
+                else if (self.statIsOfType(results[i], 'audio', 'recv')) self.audio_in.updateRxStats(results[i]);
+                else if (self.statIsOfType(results[i], 'video', 'send')) self.video_out.updateTxStats(results[i]);
+                else if (self.statIsOfType(results[i], 'video', 'recv')) {
+                    if (results[i].id == 'ssrc_1_recv') {
+                        self.video1_in.updateRxStats(results[i]);
+                    } else if (results[i].id == 'ssrc_2_recv') {
+                        self.video2_in.updateRxStats(results[i]);
+                    } else {
+                        self.video3_in.updateRxStats(results[i]);
+                    }
+                } else if (self.statIsBandwidthEstimation(results[i])) self.video_out.updateBWEStats(results[i]);
+            }
+        } else if (results.size != undefined) {
+            /*results is a MAP created by adapter.js*/
+            self.audio_out.updateTxStats(results.outbound_rtcp_audio_0);
+            self.audio_in.updateRxStats(results.inbound_rtp_audio_0);
+            self.video_out.updateTxStats(results.outbound_rtcp_video_1);
+            self.video1_in.updateRxStats(results.inbound_rtp_video_1);
+        }
+    };
+
+    MyRTCStatistics.prototype.statIsBandwidthEstimation = function(result) {
+        return result.type == 'VideoBwe';
+    };
+
+    MyRTCStatistics.prototype.statIsOfType = function(result, type, direction) {
+        var self = this;
+
+        mediaType = result.stat('mediaType');
+        if (mediaType != undefined) {
+            return result.type == 'ssrc' && mediaType == type && result.id.search(direction) != -1;
+        } else {
+            tId = result.stat('transportId');
+            return result.type == 'ssrc' && tId && tId.search(type) != -1 && result.id.search(direction) != -1;
+        }
+    };
+
+    MyRTCStatistics.prototype.getStats = function() {
+        var self = this;
+
+        if (self.audio_in.lastTimestamp == null) {
+            return { };
+        }
+        return { 'outgoing': { 'audio': self.audio_out.getStats(),
+                'video': self.video_out.getStats() },
+               'incoming': { 'audio': self.audio_in.getStats(),
+                'video': [ self.video1_in.getStats(), self.video2_in.getStats(), self.video3_in.getStats() ] } };
+    };
+    /*StreamStatistics ================================================End*/
+
+
+    function myGetStats(peer, callback) {
+        if (!!navigator.mozGetUserMedia) {
+            /*Firefox */
+            peer.getStats(null,
+                          function(rawStats) {
+                              o_stats.updateStats(rawStats);
+                              callback();
+                          },
+                          callback
+                         );
+        } else {
+            /*Chrome*/
+            peer.getStats(function(rawStats) {
+                    o_stats.updateStats(rawStats.result());
+                    callback();
+                });
+            //callback();
+        }
+    };
+
+    function getStats(peer) {
+
+        myGetStats(peer, function(results) {
+
+                if (peer == pcServer) {
+                    window.remoteResolution = [ o_stats.video1_in.info.resolution,  o_stats.video2_in.info.resolution, o_stats.video3_in.info.resolution ];
+                    window.remoteFramerate = [ o_stats.video1_in.info.framerate, o_stats.video2_in.info.framerate, o_stats.video3_in.info.framerate ];
+                    window.remoteBitrate = [ o_stats.video1_in.info.bitrate, o_stats.video2_in.info.bitrate, o_stats.video3_in.info.bitrate ];
+
+                    document.getElementById("remoteVideo1Resolution").innerHTML = window.remoteResolution[0];
+                    document.getElementById("remoteVideo1FrameRate").innerHTML = window.remoteFramerate[0] + " fps";
+                    document.getElementById("remoteVideo1BitRate").innerHTML = window.remoteBitrate[0];
+
+                    document.getElementById("remoteVideo2Resolution").innerHTML = window.remoteResolution[1];
+                    document.getElementById("remoteVideo2FrameRate").innerHTML = window.remoteFramerate[1] + " fps";
+                    document.getElementById("remoteVideo2BitRate").innerHTML = window.remoteBitrate[1];
+
+                    document.getElementById("remoteVideo3Resolution").innerHTML = window.remoteResolution[2];
+                    document.getElementById("remoteVideo3FrameRate").innerHTML = window.remoteFramerate[2] + " fps";
+                    document.getElementById("remoteVideo3BitRate").innerHTML = window.remoteBitrate[2];
+                } else {
+                    window.localResolution =  o_stats.video_out.info.resolution;
+                    window.localFramerate =  o_stats.video_out.info.framerate;
+                    window.localBitrate =  o_stats.video_out.info.bitrate;
+
+                    document.getElementById("localVideoResolution").innerHTML = window.localResolution;
+                    document.getElementById("localVideoFrameRate").innerHTML = window.localFramerate + " fps";
+                    document.getElementById("localVideoBitRate").innerHTML = window.localBitrate;
+                }
+
+            });
+    }
+    var o_stats = undefined;
+    window.statInt = undefined;
+    window.localResolution = undefined;
+    window.localFramerate = undefined;
+    window.localBitrate = undefined;
+    window.remoteResolution = [ ];
+    window.remoteFramerate = [ ];
+    window.remoteBitrate = [ ];
+
+    o_stats = new MyRTCStatistics();
+    if (window.statsInt != undefined) {
+        window.clearInterval(window.statsInt);
+    }
+    window.statsInt = window.setInterval(function() {
+            getStats(pcServer);
+            getStats(pcClient);
+        }, 5000);
+
+
+</script>
+</body>
